@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+
+.center {
+  display: flex;
+  justify-content: center;
+}
+
+.visarea {
+  height: 90vh;
+  width: 90%;
+  border: 3px solid #73AD21;
+  padding: 10px;
+  display: flex;
+  justify-content: center;
+}
+
+.container {
+  display: flex;
+  height: 95vh;
+  background: lightblue;
+}
+
+.left {
+  flex: 1;
+  background-color: gray;
+}
+
+.main {
+  flex: 4;
+  background-color: lightgray;
+  position: relative;
+}
+
+.hexdata {
+  flex: 4;
+  background-color: Navy;
+  color: lightgray;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.header {
+  flex: 0.25;
+  justify-content: center;
+}
+
+.body {
+  flex: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
+  justify-content: center;
+  cursor: crosshair;
+}
+
+.slider-width
+{
+    width: 480px;
+}
+
+.current {
+  color: LightGreen;
+}
+
+</style>
+  <script>
+var canvas;
+var ctx;
+var id;
+var rawData;
+var canvasWidth = 240;
+var canvasHeight = 500;
+var offset = 0;
+var dragging = false;
+var embedded = [];
+
+function dragHandler(ev) {
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'copy';
+}
+
+function playWav(entry) {
+  var data = rawData.slice(entry.start, entry.end).buffer;
+  const audioCtx = new AudioContext();
+  audioCtx.decodeAudioData(data, function(buffer) {
+    var source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
+    source.start();
+  });
+}
+
+function scanWavFiles() {
+  embedded = [];
+  for (var i=0; i< rawData.length; ++i) {
+    if (rawData[i] == 0x4952 && rawData[i+1] == 0x4646) {
+      var wavStart = i;
+      var wavSize = (rawData[i+2] + (rawData[i+3] << 16))/2;
+      i+=4;
+      var wavEnd = i+wavSize;
+      embedded.push({'start':Math.floor(wavStart), 'end':Math.floor(wavEnd), 'type':'Wav File'});
+    }
+  }
+  //console.log(embedded);
+}
+
+function dropHandler(ev) {
+  ev.preventDefault();
+
+  rawData = null;
+
+  var file = ev.dataTransfer.files[0], reader = new FileReader();
+  reader.onload = function (event) {
+    rawData = new Uint16Array(event.target.result);
+    scanWavFiles();
+    offset = 0;
+    document.getElementById('scrollOffset').value=offset; 
+    drawData();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function setOffset(val) {
+  offset = val;
+  drawData();
+}
+
+function setWidth(val) {
+  canvasWidth = val;
+  document.getElementById('width').value = val;
+  document.getElementById('scrollOffset').max = val;
+  drawData();
+}
+
+function InitTests() {
+  canvas = document.getElementById('canvas');
+
+  ctx = canvas.getContext('2d');
+  ctx.font = "18px Arial";
+  ctx.fillText("Drop flash image here", 10, 50);
+}
+
+function markEmbedded() {
+  embedded.forEach(function(f) {
+    var y1 = f.start / canvasWidth;
+    var y2 = f.end /canvasWidth;
+    var ym = y1 + (y2-y1)/2;
+    var x = canvasWidth + 10;
+    var ww = 5;
+    ctx.beginPath();
+    ctx.moveTo(x, y1);
+    ctx.lineTo(x+ww, ym);
+    ctx.lineTo(x, y2);
+    ctx.lineTo(x, y2);
+    ctx.stroke();
+    ctx.font = "12px Arial";
+    ctx.fillText(f.type, x +ww, ym+5);
+  })
+}
+
+function drawData() {
+  if (rawData == null) 
+    return;
+  var width = canvasWidth;
+  var pixelsCount = rawData.length + offset;
+  var height = pixelsCount/width;
+  canvasHeight = height;
+
+  ctx.canvas.width = width + 64;
+  ctx.canvas.height = height;
+  ctx.clearRect(0, 0, width + 64, height);
+
+  var id = ctx.getImageData(0, 0, width, height);
+  var pixels = id.data;
+
+  var off = offset * 4;
+  for (var i=0; i< rawData.length; ++i) {
+    var a = rawData[i];
+    var r=Math.floor((a>>11&31)*255/31+.5);
+    var g=Math.floor((a>>5&63)*255/63+.5);
+    var b=Math.floor((31&a)*255/31+.5)
+    pixels[off] = r;
+    pixels[off + 1] = g;
+    pixels[off + 2] = b;
+    pixels[off + 3] = 255;
+    off+=4;
+  }
+  ctx.putImageData(id, 0, 0);
+  markEmbedded();
+}
+
+function toHexString(data) {
+  var ss = Array.from(data, function(b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+  return ss.replace(/.{8}/g, '$& ');
+}
+
+function drawRawHex(mouseaddr, range) {
+  var addr = mouseaddr - (mouseaddr % 64);
+  if (addr < 160) addr = 160;
+  var elem = document.getElementById('hexdata');
+  elem.innerHTML = '';
+  for (var dx = -range; dx < 2*range; ++dx){
+    var at = addr + dx*16;
+    try {
+      var data = new Uint8Array(rawData.buffer, at, 16);
+    } catch (error) {
+      continue;
+    }
+    var disp = new TextDecoder('ascii').decode(data).replace(/[^\x20-\x7E]/g, '.');;
+    var line = ('0000' + at.toString(16)).slice(-5) + ": " + toHexString(data) + " " + disp;
+    if (dx==0) {
+      var span = document.createElement('span');
+      span.setAttribute('class', 'current');
+      span.appendChild(document.createTextNode(line));
+      elem.appendChild(span);
+    }
+    else {
+      elem.appendChild(document.createTextNode(line));
+    }
+    elem.appendChild(document.createElement("br"));
+  }
+  var y1 = (addr - range*16)/2 / canvasWidth;
+  var y2 = (addr + range*16)/2 / canvasWidth;
+  ctx.clearRect(canvasWidth, 0,  5, canvasHeight);
+  ctx.fillRect(canvasWidth+1, y1, 4, y2-y1);
+}
+
+function getMousePos(canvas, evt) {
+  var rect = canvas.getBoundingClientRect();
+  return {
+    x: evt.clientX - rect.left,
+    y: evt.clientY - rect.top
+  };
+}
+
+function mousemove(e) {
+    var pos = getMousePos(canvas, e);
+    if (pos == undefined) return;
+    if (pos.x > canvasWidth) return;
+    var loc = 2*(Math.floor(pos.y) * canvasWidth + Math.floor(pos.x));
+    //document.getElementById('location').value = "0x" + loc.toString(16);
+    drawRawHex(loc, 16);
+}
+
+function mouseclick(e) {
+    var pos = getMousePos(canvas, e);
+    if (pos == undefined) return;
+    if (pos.x > canvasWidth) return;
+    var loc = (Math.floor(pos.y) * canvasWidth + Math.floor(pos.x));
+    embedded.forEach(function(f) {
+      if (loc > f.start && loc < f.end){
+        playWav(f);
+      }
+    });
+}
+
+  </script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+</head>
+<body onload="InitTests()" >
+  <div class="container">
+  <div class="left"> </div>
+  <div class="main">
+    <div class="wrapper">
+      <div class="header">
+        <div>
+          <input id="inputWidth" class="slider-width" type="range" min="8" max="480" value="240" oninput="setWidth(parseInt(this.value))">
+          <label for="inputWidth">Width:</label>
+          <output id="width">240</output>
+          <input id="scrollOffset" type="number" value="0" size="4" max="480" min="0" oninput="setOffset(parseInt(this.value))">
+          <label for="scrollOffset">Offset</label>
+        </div>
+      </div>
+      <div class="body" ondrop="dropHandler(event);" ondragover="dragHandler(event);">
+          <canvas id="canvas" width="240" height="320" onmousemove="mousemove(event);" onmousedown="mouseclick(event);"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="hexdata">
+    <pre id="hexdata"></pre>
+  </div>
+</div>
+</body>
+
+</html>
